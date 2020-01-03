@@ -5,6 +5,7 @@ import (
 	upgrademgrv1alpha1 "github.com/keikoproj/upgrade-manager/api/v1alpha1"
 	"github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"testing"
 )
 
@@ -42,7 +43,7 @@ func TestUniformAcrossAzNodeSelectorSelectNodes(t *testing.T) {
 	clusterState := NewClusterState()
 	clusterState.initializeAsg(*mockAsg.AutoScalingGroupName, mockAsg.Instances)
 
-	nodeSelector := NewUniformAcrossAzNodeSelector(&mockAsg, ruObj)
+	nodeSelector := NewUniformAcrossAzNodeSelector(&mockAsg, ruObj, fake.NewSimpleClientset())
 	instances := nodeSelector.SelectNodesForRestack(clusterState)
 
 	g.Expect(2).To(gomega.Equal(len(instances)))
@@ -99,7 +100,7 @@ func TestUniformAcrossAzNodeSelectorSelectNodesOneAzComplete(t *testing.T) {
 	clusterState.markUpdateCompleted(mockID + "1-" + az)
 	clusterState.markUpdateCompleted(mockID + "1-" + az2)
 
-	nodeSelector := NewUniformAcrossAzNodeSelector(&mockAsg, ruObj)
+	nodeSelector := NewUniformAcrossAzNodeSelector(&mockAsg, ruObj, fake.NewSimpleClientset())
 	instances := nodeSelector.SelectNodesForRestack(clusterState)
 
 	g.Expect(1).To(gomega.Equal(len(instances)))

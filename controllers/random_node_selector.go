@@ -1,8 +1,10 @@
 package controllers
 
 import (
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
 	upgrademgrv1alpha1 "github.com/keikoproj/upgrade-manager/api/v1alpha1"
+	"k8s.io/client-go/kubernetes"
 	"log"
 )
 
@@ -10,24 +12,39 @@ type RandomNodeSelector struct {
 	maxUnavailable int
 	ruObj          *upgrademgrv1alpha1.RollingUpgrade
 	asg            *autoscaling.Group
+	kubeClient     kubernetes.Interface
 }
 
-func NewRandomNodeSelector(
-	asg *autoscaling.Group,
-	ruObj *upgrademgrv1alpha1.RollingUpgrade,
-) *RandomNodeSelector {
+func NewRandomNodeSelector(asg *autoscaling.Group, ruObj *upgrademgrv1alpha1.RollingUpgrade, kubeClient kubernetes.Interface) *RandomNodeSelector {
 	maxUnavailable := getMaxUnavailable(ruObj.Spec.Strategy, len(asg.Instances))
 	log.Printf("Max unavailable calculated for %s is %d", ruObj.Name, maxUnavailable)
 	return &RandomNodeSelector{
 		maxUnavailable: maxUnavailable,
 		ruObj:          ruObj,
 		asg:            asg,
+		kubeClient:     kubeClient,
 	}
 }
 
-func (selector *RandomNodeSelector) SelectNodesForRestack(
-	state ClusterState,
-) []*autoscaling.Instance {
-	return getNextAvailableInstances(selector.ruObj.Spec.AsgName,
-		selector.maxUnavailable, selector.asg.Instances, state)
+func (selector *RandomNodeSelector) SelectNodesForRestack(state ClusterState) []*autoscaling.Instance {
+	orderedInstances := []*autoscaling.Instance{}
+	upgradingInstances, err := getUpgradingInstances(selector.kubeClient)
+	if err != nil {
+		log.Printf("could not get upgrading instances")
+	}
+	instances := getNextAvailableInstances(selector.ruObj.Spec.AsgName, selector.maxUnavailable, selector.asg.Instances, state)
+
+	for _, instance := range instances {
+		if stringInSlice(aws.StringValue(instance.InstanceId), upgradingInstances) {
+			orderedInstances = append(orderedInstances, instance)
+		}
+	}
+
+	for _, instance := range instances {
+		if !stringInSlice(aws.StringValue(instance.InstanceId), upgradingInstances) {
+			orderedInstances = append(orderedInstances, instance)
+		}
+	}
+
+	return orderedInstances
 }

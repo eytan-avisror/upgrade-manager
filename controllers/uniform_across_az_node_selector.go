@@ -1,8 +1,10 @@
 package controllers
 
 import (
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/autoscaling"
 	upgrademgrv1alpha1 "github.com/keikoproj/upgrade-manager/api/v1alpha1"
+	"k8s.io/client-go/kubernetes"
 	"log"
 )
 
@@ -15,13 +17,10 @@ type UniformAcrossAzNodeSelector struct {
 	azNodeCounts map[string]*azNodesCountState
 	ruObj        *upgrademgrv1alpha1.RollingUpgrade
 	asg          *autoscaling.Group
+	kubeClient   kubernetes.Interface
 }
 
-func NewUniformAcrossAzNodeSelector(
-	asg *autoscaling.Group,
-	ruObj *upgrademgrv1alpha1.RollingUpgrade,
-) *UniformAcrossAzNodeSelector {
-
+func NewUniformAcrossAzNodeSelector(asg *autoscaling.Group, ruObj *upgrademgrv1alpha1.RollingUpgrade, kubeClient kubernetes.Interface) *UniformAcrossAzNodeSelector {
 	// find total number of nodes in each AZ
 	azNodeCounts := make(map[string]*azNodesCountState)
 	for _, instance := range asg.Instances {
@@ -42,13 +41,18 @@ func NewUniformAcrossAzNodeSelector(
 		azNodeCounts: azNodeCounts,
 		ruObj:        ruObj,
 		asg:          asg,
+		kubeClient:   kubeClient,
 	}
 }
 
-func (selector *UniformAcrossAzNodeSelector) SelectNodesForRestack(
-	state ClusterState,
-) []*autoscaling.Instance {
+func (selector *UniformAcrossAzNodeSelector) SelectNodesForRestack(state ClusterState) []*autoscaling.Instance {
 	var instances []*autoscaling.Instance
+	var orderedInstances []*autoscaling.Instance
+
+	upgradingInstances, err := getUpgradingInstances(selector.kubeClient)
+	if err != nil {
+		log.Printf("could not get upgrading instances")
+	}
 
 	// Fetch instances to update from each instance group
 	for az, processedState := range selector.azNodeCounts {
@@ -62,5 +66,17 @@ func (selector *UniformAcrossAzNodeSelector) SelectNodesForRestack(
 		}
 	}
 
-	return instances
+	for _, instance := range instances {
+		if stringInSlice(aws.StringValue(instance.InstanceId), upgradingInstances) {
+			orderedInstances = append(orderedInstances, instance)
+		}
+	}
+
+	for _, instance := range instances {
+		if !stringInSlice(aws.StringValue(instance.InstanceId), upgradingInstances) {
+			orderedInstances = append(orderedInstances, instance)
+		}
+	}
+
+	return orderedInstances
 }

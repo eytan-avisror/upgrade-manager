@@ -5,6 +5,7 @@ import (
 	upgrademgrv1alpha1 "github.com/keikoproj/upgrade-manager/api/v1alpha1"
 	"github.com/onsi/gomega"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes/fake"
 	"testing"
 )
 
@@ -26,7 +27,7 @@ func TestGetRandomNodeSelector(t *testing.T) {
 		Spec:       upgrademgrv1alpha1.RollingUpgradeSpec{AsgName: someAsg},
 	}
 
-	nodeSelector := getNodeSelector(&mockAsg, ruObj)
+	nodeSelector := getNodeSelector(&mockAsg, ruObj, fake.NewSimpleClientset())
 
 	g.Expect(nodeSelector).Should(gomega.BeAssignableToTypeOf(&RandomNodeSelector{}))
 }
@@ -54,7 +55,7 @@ func TestGetUniformAcrossAzNodeSelector(t *testing.T) {
 		},
 	}
 
-	nodeSelector := getNodeSelector(&mockAsg, ruObj)
+	nodeSelector := getNodeSelector(&mockAsg, ruObj, fake.NewSimpleClientset())
 
 	g.Expect(nodeSelector).Should(gomega.BeAssignableToTypeOf(&UniformAcrossAzNodeSelector{}))
 }
@@ -82,7 +83,7 @@ func TestGetNodeSelectorWithInvalidStrategy(t *testing.T) {
 		},
 	}
 
-	nodeSelector := getNodeSelector(&mockAsg, ruObj)
+	nodeSelector := getNodeSelector(&mockAsg, ruObj, fake.NewSimpleClientset())
 
 	g.Expect(nodeSelector).Should(gomega.BeAssignableToTypeOf(&RandomNodeSelector{}))
 }

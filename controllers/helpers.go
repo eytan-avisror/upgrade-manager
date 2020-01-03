@@ -1,11 +1,15 @@
 package controllers
 
 import (
-	"github.com/aws/aws-sdk-go/service/autoscaling"
-	upgrademgrv1alpha1 "github.com/keikoproj/upgrade-manager/api/v1alpha1"
 	"log"
 	"strconv"
 	"strings"
+
+	"github.com/aws/aws-sdk-go/service/autoscaling"
+	upgrademgrv1alpha1 "github.com/keikoproj/upgrade-manager/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
 )
 
 // getMaxUnavailable calculates and returns the maximum unavailable nodes
@@ -30,6 +34,40 @@ func getMaxUnavailable(strategy upgrademgrv1alpha1.UpdateStrategy, totalNodes in
 		maxUnavailable = 1
 	}
 	return maxUnavailable
+}
+
+func getNodeInstanceID(node corev1.Node) string {
+	splitProviderID := strings.Split(node.Spec.ProviderID, "/")
+	instanceID := splitProviderID[len(splitProviderID)-1]
+	return instanceID
+}
+
+func getUpgradingInstances(kubeClient kubernetes.Interface) ([]string, error) {
+	upgradingInstances := []string{}
+
+	nodes, err := kubeClient.CoreV1().Nodes().List(metav1.ListOptions{})
+	if err != nil {
+		return upgradingInstances, err
+	}
+
+	for _, node := range nodes.Items {
+		annotations := node.GetAnnotations()
+		if val, ok := annotations[InProgressAnnotationKey]; ok {
+			if val == "true" {
+				upgradingInstances = append(upgradingInstances, getNodeInstanceID(node))
+			}
+		}
+	}
+	return upgradingInstances, nil
+}
+
+func stringInSlice(a string, list []string) bool {
+	for _, b := range list {
+		if b == a {
+			return true
+		}
+	}
+	return false
 }
 
 // getNextAvailableInstances checks the cluster state store for the instance state
@@ -68,5 +106,7 @@ func getNextSetOfAvailableInstancesInAz(
 			}
 		}
 	}
+
+	log.Printf("InstanceForUpdate: %+v", instancesForUpdate)
 	return instancesForUpdate
 }

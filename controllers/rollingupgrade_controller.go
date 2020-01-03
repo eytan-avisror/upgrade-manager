@@ -65,6 +65,8 @@ const (
 	ClearCompletedFrequency = "1d"
 	// ClearErrorFrequency is the time after which an errored rollingUpgrade object is deleted.
 	ClearErrorFrequency = "7d"
+	// InProgressAnnotationKey is the annotation key to mark a node object rotation in progress
+	InProgressAnnotationKey = "upgrademgr.keikoproj.io/in-progress"
 
 	// Environment variable keys
 	asgNameKey      = "ASG_NAME"
@@ -96,7 +98,7 @@ var DefaultRetryer = awsclient.DefaultRetryer{
 type RollingUpgradeReconciler struct {
 	client.Client
 	Log             logr.Logger
-	generatedClient *kubernetes.Clientset
+	generatedClient kubernetes.Interface
 	Asg             *autoscaling.Group
 	NodeList        *corev1.NodeList
 	admissionMap    sync.Map
@@ -313,6 +315,16 @@ func (r *RollingUpgradeReconciler) getNodeName(i *autoscaling.Instance, nodeList
 	return node.Name
 }
 
+func (r *RollingUpgradeReconciler) annotateNode(nodeName string, annotationKey string, annotationValue string) error {
+	script := fmt.Sprintf("%s annotate --overwrite node %s %s=%s", KubeCtlBinary, nodeName, annotationKey, annotationValue)
+	out, err := runScript(script, false, nodeName)
+	if err != nil {
+		log.Printf(out)
+		return err
+	}
+	return nil
+}
+
 func (r *RollingUpgradeReconciler) getNodeFromAsg(i *autoscaling.Instance, nodeList *corev1.NodeList, ruObj *upgrademgrv1alpha1.RollingUpgrade) *corev1.Node {
 	for _, n := range nodeList.Items {
 		tokens := strings.Split(n.Spec.ProviderID, "/")
@@ -413,7 +425,7 @@ func (r *RollingUpgradeReconciler) runRestack(ctx *context.Context, ruObj *upgra
 		return 0, nil
 	}
 
-	nodeSelector := getNodeSelector(asg, ruObj)
+	nodeSelector := getNodeSelector(asg, ruObj, r.generatedClient)
 
 	// set the state of instances in the ASG to new in the cluster store
 	r.ClusterState.initializeAsg(*asg.AutoScalingGroupName, asg.Instances)
@@ -772,6 +784,13 @@ func (r *RollingUpgradeReconciler) UpdateInstance(ctx *context.Context,
 
 	// Load the environment variables for scripts to run
 	err := loadEnvironmentVariables(ruObj, r.getNodeFromAsg(i, r.NodeList, ruObj))
+	if err != nil {
+		ch <- err
+		return
+	}
+
+	// Annotate node object to mark it in progress
+	err = r.annotateNode(nodeName, InProgressAnnotationKey, "true")
 	if err != nil {
 		ch <- err
 		return
